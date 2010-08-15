@@ -66,8 +66,10 @@
 # 26/04/2010 - 0.5 - Courgette
 # * move cmd_ready to the MatchManager class
 # * a player cannot unready once the match countdown started
+# 15/08/2010 - 0.5.1 - Nye Liu
+# * client.teamId is an int
 
-__version__ = '0.5'
+__version__ = '0.5.1'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re
@@ -495,13 +497,13 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             # input[0] is the player id
             sclient = self._adminPlugin.findClientPrompt(input[0], client)
             if sclient:
-                if sclient.teamId == '1':
+                if sclient.teamId == 1:
                     newteam = '2'
                 else:
                     newteam = '1' 
                 try:
                     self.console.write(('admin.movePlayer', sclient.cid, newteam, 0, 'true'))
-                    cmd.sayLoudOrPM(client, '%s forced to the other team' % sclient.cid)
+                    cmd.sayLoudOrPM(client, '%s forced from team %s to team %s' % (sclient.cid, sclient.teamId, newteam))
                 except Bfbc2CommandFailedError, err:
                     client.message('Error, server replied %s' % err)
         
@@ -667,7 +669,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             if client.cid in biggestteam:
                 self.debug('%s has contributed to unbalance the teams')
                 client.message('do not make teams unbalanced')
-                if client.teamId == '1':
+                if client.teamId == 1:
                     newteam = '2'
                 else:
                     newteam = '1' 
