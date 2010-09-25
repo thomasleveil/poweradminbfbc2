@@ -68,8 +68,10 @@
 # * a player cannot unready once the match countdown started
 # 15/08/2010 - 0.5.1 - Nye Liu
 # * client.teamId is an int
+# 25/09/2010 - 0.5.2 - xlr8or
+# * handle changes in parser: bfbc2 to frostbite
 
-__version__ = '0.5.1'
+__version__ = '0.5.2'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re
@@ -77,7 +79,10 @@ import b3.events
 import b3.plugin
 import b3.parsers.bfbc2 as bfbc2
 import string
-from b3.parsers.bfbc2.bfbc2Connection import Bfbc2CommandFailedError
+try:
+    from b3.parsers.bfbc2.bfbc2Connection import Bfbc2CommandFailedError
+except:
+    from b3.parsers.frostbite.bfbc2Connection import Bfbc2CommandFailedError
 
 #--------------------------------------------------------------------------------------------------
 class Poweradminbfbc2Plugin(b3.plugin.Plugin):
