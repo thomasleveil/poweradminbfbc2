@@ -74,15 +74,15 @@
 # * add !swap command
 # * add scrambler
 # * now requires B3 v1.7
+# 22/05/2011 - 0.7  - Courgette
+# * update teambalancer
 #
-__version__ = '0.6'
+__version__ = '0.7'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re, random
-import b3.events
+
 import b3.plugin
-import b3.parsers.bfbc2 as bfbc2
-import string
 from b3.parsers.frostbite.connection import FrostbiteCommandFailedError
 from b3.parsers.frostbite.util import PlayerInfoBlock
 
@@ -169,7 +169,13 @@ class Scrambler:
 class Poweradminbfbc2Plugin(b3.plugin.Plugin):
 
     _adminPlugin = None
-    _enableTeamBalancer = None
+
+    _enableTeamBalancer = False
+    _ignoreBalancingTill = 0
+    _tinterval = 0
+    _teamdiff = 1
+    _tcronTab = None
+    _tmaxlevel = 100
     
     _matchmode = False
     _match_plugin_disable = []
@@ -182,7 +188,6 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
     
     _parseUserCmdRE = re.compile(r'^(?P<cid>[^\s]{2,}|@[0-9]+)\s?(?P<parms>.*)$')
     
-    _ignoreBalancingTill = 0
     
     def startup(self):
         """\
@@ -213,11 +218,11 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
         self._ignoreBalancingTill = self.console.time() + 60
 
         # Register our events
-        self.verbose('Registering events')
         self.registerEvent(b3.events.EVT_CLIENT_TEAM_CHANGE)
         self.registerEvent(b3.events.EVT_GAME_ROUND_START)
+        self.registerEvent(b3.events.EVT_GAME_ROUND_PLAYER_SCORES)
+        self.registerEvent(b3.events.EVT_CLIENT_DISCONNECT)
         self.registerEvent(b3.events.EVT_CLIENT_AUTH)
-        self.debug('Started')
 
 
     def getCmd(self, cmd):
@@ -236,13 +241,52 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
         self.LoadScrambler()
 
     def LoadTeamBalancer(self):
-        # TEAMBALANCER SETUP
         try:
             self._enableTeamBalancer = self.config.getboolean('teambalancer', 'enabled')
         except:
             self._enableTeamBalancer = False
             self.debug('Using default value (%s) for Teambalancer enabled', self._enableTeamBalancer)
-      
+
+        try:
+            self._tmaxlevel = self.config.getint('teambalancer', 'maxlevel')
+        except:
+            self._tmaxlevel = 100
+            self.debug('Using default value (%s) for Teambalancer maxlevel', self._tmaxlevel)
+
+        try:
+            self._tinterval = self.config.getint('teambalancer', 'checkInterval')
+            # set a max interval for teamchecker
+            if self._tinterval > 59:
+                self._tinterval = 59
+        except:
+            self._tinterval = 0
+            self.debug('Using default value (%s) for Teambalancer Interval', self._tinterval)
+            
+    
+        try:
+            self._teamdiff = self.config.getint('teambalancer', 'maxDifference')
+            # set a minimum/maximum teamdifference
+            if self._teamdiff < 1:
+                self._teamdiff = 1
+            if self._teamdiff > 9:
+                self._teamdiff = 9
+        except:
+            self._teamdiff = 1
+            self.debug('Using default value (%s) for teamdiff', self._teamdiff)
+        
+        
+        self.debug('Teambalancer enabled: %s' %(self._tinterval))
+        self.debug('Teambalancer maxlevel: %s' %(self._tmaxlevel))
+        self.debug('Teambalancer check interval (in minute): %s' %(self._tinterval))
+        self.debug('Teambalancer max team difference: %s' %(self._teamdiff))
+        if self._tcronTab:
+            # remove existing crontab
+            self.console.cron - self._tcronTab
+        if self._tinterval > 0:
+            self._tcronTab = b3.cron.PluginCronTab(self, self.autobalance, 0, '*/%s' % (self._tinterval))
+            self.console.cron + self._tcronTab
+            
+            
     def LoadMatchMode(self):
         # MATCH MODE SETUP
         self._match_plugin_disable = []
@@ -315,6 +359,9 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
                 elif self._autoscramble_maps and self.console.game.rounds == 0:
                     self.debug('auto scramble is planned for maps')
                     self._scrambler.scrambleTeams()
+        elif event.type == b3.events.EVT_CLIENT_DISCONNECT:
+            # do not balance just after a player disconnected
+            self._ignoreBalancingTill = self.console.time() + 10
         elif event.type == b3.events.EVT_CLIENT_AUTH:
             self.onClientAuth(event.data, event.client)
 
@@ -371,7 +418,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             if re.match('^[a-z0-9_.]+.cfg$', data, re.I):
                 self.debug('Executing configfile = [%s]', data)
                 try:
-                    response = self.console.write(('admin.runScript', '%s' % data))
+                    self.console.write(('admin.runScript', '%s' % data))
                 except FrostbiteCommandFailedError, err:
                     self.error(err)
                     client.message('Error: %s' % err.response)
@@ -388,7 +435,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
         else:
             self.debug('Executing punkbuster command = [%s]', data)
             try:
-                response = self.console.write(('punkBuster.pb_sv_command', '%s' % data))
+                self.console.write(('punkBuster.pb_sv_command', '%s' % data))
             except FrostbiteCommandFailedError, err:
                 self.error(err)
                 client.message('Error: %s' % err.response)
@@ -526,9 +573,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
                 client.message('Invalid or missing data, try !help paset')
             else:
                 # are we still here? Let's write it to console
-                input = data.split(' ',1)
-                varName = input[0]
-                value = input[1]
+                varName, value = data.split(' ',1)
                 try:
                     self.console.write(('vars.%s' % varName, value))
                     client.message('%s set' % varName)
@@ -561,7 +606,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
         else:
             match = self.console.getMapsSoundingLike(data)
             if len(match) > 1:
-                client.message('do you mean : %s ?' % string.join(match,', '))
+                client.message('do you mean : %s ?' % ", ".join(match))
                 return
             if len(match) == 1:
                 levelname = match[0]
@@ -908,6 +953,14 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
                 except FrostbiteCommandFailedError, err:
                     self.warning('Error, server replied %s' % err)
                 
+    def autobalance(self):
+        ## called from cron
+        if self._enableTeamBalancer is False:
+            return
+        if self.console.time() < self._ignoreBalancingTill:
+            self.debug('ignoring team balancing as the round started less than 1 minute ago')
+            return
+        self.teambalance()
                 
     def teambalance(self):
         if self._enableTeamBalancer:
@@ -916,8 +969,8 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             
             # if teams are uneven by one or even, then stop here
             gap = abs(len(team1players) - len(team2players))
-            if gap <= 1:
-                self.verbose('Teambalance: Teams are balanced, T1: %s, T2: %s (diff: %s)' %(len(team1players), len(team2players), gap))
+            if gap <= self._teamdiff:
+                self.verbose('Teambalancer: Teams are balanced, T1: %s, T2: %s (diff: %s, tolerance: %s)' %(len(team1players), len(team2players), gap, self._teamdiff))
                 return
             
             howManyMustSwitch = int(gap / 2)
@@ -935,24 +988,22 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             clients = self.console.clients.getList()
             for c in clients:
                 if c.teamId == bigTeam:
-                    teamTimeVar = c.isvar(self, 'teamtime')
-                    if not teamTimeVar:
-                        self.debug('client has no variable teamtime')
-                        c.setvar(self, 'teamtime', self.console.time())
-                        self.verbose('Client variable teamtime set to: %s' % c.var(self, 'teamtime').value)
-                    playerTeamTimes[c.cid] = teamTimeVar.value
-            
-            self.debug('playerTeamTimes: %s' % playerTeamTimes)
+                    playerTeamTimes[c] = c.var(self, 'teamtime', self.console.time()).value
+            #self.debug('playerTeamTimes: %s' % playerTeamTimes)
             sortedPlayersTeamTimes = sorted(playerTeamTimes.iteritems(), key=lambda (k,v):(v,k))
-            self.debug('sortedPlayersTeamTimes: %s' % sortedPlayersTeamTimes)
+            #self.debug('sortedPlayersTeamTimes: %s' % sortedPlayersTeamTimes)
 
-            for c, teamtime in sortedPlayersTeamTimes[:howManyMustSwitch]:
-                try:
-                    self.debug('forcing %s to the other team' % c.cid)
-                    self.console.write(('admin.movePlayer', c.cid, smallTeam, 0, 'true'))
-                except FrostbiteCommandFailedError, err:
-                    self.error(err)
+            playersToMove = [c for (c,teamtime) in sortedPlayersTeamTimes if c.maxLevel<self._tmaxlevel][:howManyMustSwitch]
+            self.console.say('forcing %s to the other team' % (', '.join([c.name for c in playersToMove])))
+            for c in playersToMove:
+                self._movePlayer(c, smallTeam)
                 
+    def _movePlayer(self, client, newTeamId):
+        try:
+            client.setvar(self, 'movedByBot', True)
+            self.console.write(('admin.movePlayer', client.cid, newTeamId, 0, 'true'))
+        except FrostbiteCommandFailedError, err:
+            self.warning('Error, server replied %s' % err)
                     
     def getTeams(self):
         """Return two lists containing the names of players from both teams"""
@@ -1145,8 +1196,10 @@ if __name__ == '__main__':
         </settings>
     
         <settings name="teambalancer">
-            <!-- on/off - if 'on' the bot will switch players making teams unbalanced -->
-            <set name="enabled">off</set>
+            <set name="enabled">no</set>
+            <set name="checkInterval">1</set>
+            <set name="maxDifference">1</set>
+            <set name="maxlevel">20</set>
         </settings>
     
         <settings name="scrambler">
@@ -1384,9 +1437,9 @@ if __name__ == '__main__':
         p._scrambler.scrambleTeams()
         print "============="
         time.sleep(5)
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, 2, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', 2, None))
         time.sleep(10)
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, 2, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', 2, None))
     
     def test_autoscramble_round():
         print """
@@ -1406,35 +1459,35 @@ if __name__ == '__main__':
         fakeConsole.clients.newClient(cid='p3', guid='p3')
         print "============="
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         fakeConsole.game.rounds = 1
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         superadmin.says('!autoscramble round')
         time.sleep(1)
         print '=============== round 0 ============'
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '--------------- round 1 ------------'
         fakeConsole.game.rounds = 1
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '--------------- round 2 ------------'
         fakeConsole.game.rounds = 2
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '=============== round 0 ============'
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '--------------- round 1 ------------'
         fakeConsole.game.rounds = 1
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         
            
     
@@ -1456,39 +1509,79 @@ if __name__ == '__main__':
         fakeConsole.clients.newClient(cid='p3', guid='p3')
         print "============="
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         fakeConsole.game.rounds = 1
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         superadmin.says('!autoscramble map')
         time.sleep(1)
         print '=============== round 0 ============'
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '--------------- round 1 ------------'
         fakeConsole.game.rounds = 1
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '--------------- round 2 ------------'
         fakeConsole.game.rounds = 2
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '=============== round 0 ============'
         fakeConsole.game.rounds = 0
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
         time.sleep(1)
         print '--------------- round 1 ------------'
         fakeConsole.game.rounds = 1
-        fakeConsole.queueEvent(b3.events.Event(b3.events.EVT_GAME_ROUND_START, fakeConsole.game, None))
+        fakeConsole.queueEvent(fakeConsole.getEvent('EVT_GAME_ROUND_START', fakeConsole.game, None))
+        
+    def test_teambalancer():
+        p._ignoreBalancingTill = time.time() - 1
+        p._enableTeamBalancer = True
+        # remove crontab s
+        if p._tcronTab:
+            p.console.cron - p._tcronTab
+        
+        from b3.fake import simon, moderator, FakeClient
+        
+        time.sleep(1)
+        p.teambalance()
+        time.sleep(2)
+        p.teambalance()
+        time.sleep(2)
+        print "- - - - - - - - - - - "
+        superadmin.teamId = 1
+        joe.teamId = 1
+        joe.groupBits = 16
+        simon.connects('simon')
+        simon.teamId = 1
+        simon.groupBits = 16
+        moderator.connects('moderator')
+        moderator.teamId = 1
+        moderator.groupBits = 16
+        p1 = FakeClient(fakeConsole, name="p1", exactName="P1", guid="p1", groupBits=16, teamId=1)
+        p1.connects('p1')
+        p2 = FakeClient(fakeConsole, name="p2", exactName="P2", guid="p2", groupBits=1, teamId=1)
+        p2.connects('p2')
+        p3 = FakeClient(fakeConsole, name="p3", exactName="P3", guid="p3", groupBits=16, teamId=1)
+        p3.connects('p3')
+        p4 = FakeClient(fakeConsole, name="p4", exactName="P4", guid="p4", groupBits=1, teamId=1)
+        p4.connects('p4')
+        p5 = FakeClient(fakeConsole, name="p5", exactName="P5", guid="p5", groupBits=16, teamId=1)
+        p5.connects('p5')
+        p6 = FakeClient(fakeConsole, name="p6", exactName="P6", guid="p6", groupBits=16, teamId=1)
+        p6.connects('p6')
+        time.sleep(2)
+        p.teambalance()
         
 
     #test_swap()
-    test_scramble()
-    test_autoscramble_round()
-    test_autoscramble_map()
+    #test_scramble()
+    #test_autoscramble_round()
+    #test_autoscramble_map()
+    test_teambalancer()
     

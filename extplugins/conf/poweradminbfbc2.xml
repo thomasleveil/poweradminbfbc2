@@ -44,8 +44,14 @@
 	</settings>
 
 	<settings name="teambalancer">
-		<!-- on/off - if 'on' the bot will switch players making teams unbalanced -->
-		<set name="enabled">off</set>
+		<!-- yes/no - if enabled, the team balancer auto balance teams -->
+		<set name="enabled">no</set>
+		<!-- how often should the team balancer check for uneven teams (in minute) -->
+		<set name="checkInterval">1</set>
+		<!-- the maximum team difference in the number of players tolerated -->
+		<set name="maxDifference">1</set>
+		<!-- player having a group level equal or above maxlevel won't be balanced -->
+		<set name="maxlevel">40</set>
 	</settings>
 
 	<settings name="scrambler">
