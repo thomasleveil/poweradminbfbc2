@@ -82,7 +82,13 @@ import string
 try:
     from b3.parsers.bfbc2.bfbc2Connection import Bfbc2CommandFailedError
 except:
-    from b3.parsers.frostbite.bfbc2Connection import Bfbc2CommandFailedError
+    try:
+        # B3 v1.4.0+
+        from b3.parsers.frostbite.connection import FrostbiteCommandFailedError as Bfbc2CommandFailedError
+    except ImportError:
+        # B3 v1.4.0
+        from b3.parsers.frostbite.bfbc2Connection import Bfbc2CommandFailedError
+
 
 #--------------------------------------------------------------------------------------------------
 class Poweradminbfbc2Plugin(b3.plugin.Plugin):
@@ -610,7 +616,47 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
         """
         self._changeMode(data, client, cmd, mode='SQRUSH')
         
-      
+
+    def cmd_swap(self, data, client, cmd=None):
+        """\
+        <player A> <player B> - swap teams for player A and B if they are in different teams
+        """
+        input = self._adminPlugin.parseUserCmd(data)
+        if not input:
+            client.message('Invalid data, try !help swap')
+            return
+        # input[0] is player A
+        pA = input[0]
+
+        if len(input)==1 or input[1] is None:
+            client.message('Invalid data, try !help swap')
+            return
+                
+        input = self._adminPlugin.parseUserCmd(input[1])
+        if not input:
+            client.message('Invalid data, try !help swap')
+            return
+        pB = input[0]
+        
+        sclientA = self._adminPlugin.findClientPrompt(pA, client)
+        if not sclientA:
+            return
+        sclientB = self._adminPlugin.findClientPrompt(pB, client)
+        if not sclientB:
+            return
+        if sclientA.teamId not in (1, 2) and sclientB.teamId not in (1, 2):
+            client.message('could not determine players teams')
+            return
+        if sclientA.teamId == sclientB.teamId:
+            client.message('both players are in the same team. Cannot swap')
+            return
+        teamA = sclientA.teamId
+        teamB = sclientB.teamId
+        teamA, teamB = teamB, teamA
+        self._movePlayer(sclientA, teamA)
+        self._movePlayer(sclientB, teamB)
+        cmd.sayLoudOrPM(client, 'swapped player %s with %s' % (sclientA.cid, sclientB.cid))
+
                 
         
 ##################################################################################################  
@@ -864,9 +910,9 @@ class MatchManager:
 if __name__ == '__main__':
     import time
     
-    from b3.fake import fakeConsole
+    from b3.fake import fakeConsole, FakeConsole
     fakeConsole.gameName = 'bfbc2'
-
+    
     from b3.fake import joe, simon, moderator, superadmin
             
     from b3.config import XmlConfigParser
@@ -898,6 +944,7 @@ if __name__ == '__main__':
     
             <set name="pateambalance">40</set>
             <set name="pateams-teams">20</set>
+            <set name="swap">20</set>
     
             <set name="payell-yell">20</set>
             <set name="payellteam-yt">20</set>
@@ -933,8 +980,40 @@ if __name__ == '__main__':
     p.onStartup()
 
     joe.connects('Joe')
-    simon.connects('Simon')
-    moderator.connects('Mod')
+    joe.teamId = 1
+    print 'joe.guid: %s' % joe.guid
+    superadmin.connects('superadmin')
+    superadmin.teamId = 1
+    print 'superadmin.guid: %s' % superadmin.guid
+    
+    def getPlayerList(self=None, maxRetries=0):
+        players = {}
+        for c in fakeConsole.clients.getList():
+            players[c.cid] = {
+                'cid' : c.cid,
+                'name' : c.name,
+                'teamId': c.teamId
+                }
+        print "getPlayerList : %s" % repr(players)
+        return players
+    FakeConsole.getPlayerList = getPlayerList
+    
+    def getPlayerScores(self=None, maxRetries=0):
+        scores = {}
+        for c in fakeConsole.clients.getList():
+            scores[c.cid] = random.randint(-20, 200)
+        print "getPlayerScores : %s" % repr(scores)
+        return scores
+    FakeConsole.getPlayerScores = getPlayerScores
+    
+    def getClient(self, cid, _guid=None):
+        return fakeConsole.clients.getByCID(cid)
+    FakeConsole.getClient = getClient
+    
+    def movePlayer(client, newTeamId):
+        client.teamId = newTeamId
+        print " %s -----> team %s" % (client.cid, newTeamId)
+    p._movePlayer = movePlayer
     
     def testMatch1():
         print """-----------------------
@@ -1066,4 +1145,22 @@ if __name__ == '__main__':
         superadmin.says('!pasqrush')
         superadmin.says('!sqru')
         
-    testMatch6()
+        
+    def test_swap():
+        superadmin.says('!swap')
+        superadmin.says('!swap alfred')
+        superadmin.says('!swap alfred joe')
+        superadmin.says('!swap joe alfred')
+        joe.teamId = 1
+        superadmin.teamId = 1
+        superadmin.says('!swap joe god')
+        time.sleep(1)
+        joe.teamId = 2
+        superadmin.says('!swap joe god')
+        time.sleep(1)
+        if joe.teamId == 1 and superadmin.teamId == 2:
+            print "swap success"
+        else:
+            print "players where not swapped !"
+        
+    test_swap()

@@ -24,6 +24,7 @@
 
 		<set name="pateambalance">40</set>
 		<set name="pateams-teams">20</set>
+		<set name="swap">20</set>
 
 		<set name="payell-yell">20</set>
 		<set name="payellteam-yt">20</set>
