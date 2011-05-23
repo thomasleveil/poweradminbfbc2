@@ -76,8 +76,11 @@
 # * now requires B3 v1.7
 # 22/05/2011 - 0.7  - Courgette
 # * update teambalancer
+# 24/05/2011 - 0.7.1  - Courgette
+# * changing game mode will end the current round so that the new mode is loaded right away
+# * changing game mode to the currently running mode will be cancelled
 #
-__version__ = '0.7'
+__version__ = '0.7.1'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re, random
@@ -762,9 +765,13 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             self.error('invalid game mode %s' % mode)
         else:
             try:
-                self.console.write(('admin.setPlaylist', mode))
-                client.message('Server playlist changed to %s' % mode)
-                client.message('type !map <some map> to change server mode now')
+                self.console.getServerInfo()
+                if self.console.game.gameType == mode:
+                    client.message('Server is already using the %s playlist' % mode)
+                else:
+                    self.console.write(('admin.setPlaylist', mode))
+                    client.message('Server playlist changed to %s' % mode)
+                    self.console.write(('admin.endRound', 0))
             except FrostbiteCommandFailedError, err:
                 client.message('Failed to change game mode. Server replied with: %s' % err)
             
