@@ -14,18 +14,22 @@
 		<set name="pamaprestart-maprestart">60</set>
 		<set name="pamapreload-mapreload">60</set>
 		<set name="pasetnextmap-setnextmap">60</set>
+		<set name="runnextround-rnr">60</set>
 
 		<set name="pachangeteam-ct">60</set>
 		<set name="swap">20</set>
 		<set name="paspectate-spectate">60</set>
 		<set name="pakill-kill">60</set>
 
+		<set name="reserveslot">60</set>
+		<set name="unreserveslot">60</set>
+
 		<set name="paserverinfo">40</set>
 		<set name="paversion">20</set>
 
 		<set name="pateambalance">40</set>
 		<set name="pateams-teams">20</set>
-		
+
 		<set name="scramble">20</set>
 		<set name="scramblemode">20</set>
 		<set name="autoscramble">20</set>

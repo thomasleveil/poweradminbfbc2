@@ -81,8 +81,11 @@
 # * changing game mode to the currently running mode will be cancelled
 # 24/05/2011 - 0.7.2 - Courgette
 # * new attempt at fixing commands that change game mode
+# 24/05/2011 - 0.10.0 - Courgette
+# * revert commands that change game mode (a fix is now in the BFBC2 parser)
+# * add commands !runnextround, !reserveslot and !unreserveslot 
 #
-__version__ = '0.7.2'
+__version__ = '0.10.0'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re, random
@@ -652,6 +655,66 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             except FrostbiteCommandFailedError, err:
                 client.message('Error, server replied %s' % err)
         
+    def cmd_reserveslot(self, data, client, cmd=None):
+        """\
+        <player> add player to the list of players who can use the reserved slots
+        """
+        # this will split the player name and the message
+        input = self._adminPlugin.parseUserCmd(data)
+        if input:
+            sclient = self._adminPlugin.findClientPrompt(input[0], client)
+            if not sclient:
+                # a player matching the name was not found, a list of closest matches will be displayed
+                # we can exit here and the user will retry with a more specific player
+                return False
+            else:
+                try:
+                    self.console.write(('reservedSlots.load',))
+                    self.console.write(('reservedSlots.addPlayer', sclient.cid))
+                    self.console.write(('reservedSlots.save',))
+                    client.message('%s added to reserved slots list' % sclient.cid)
+                    sclient.message('You now have access to reserved slots thanks to %s' % client.cid)
+                except FrostbiteCommandFailedError, err:
+                    if err.message == ['PlayerAlreadyInList']:
+                        client.message('%s already has access to reserved slots' % sclient.cid)
+                    else:
+                        client.message('Error: %s' % err.message)
+
+    def cmd_unreserveslot(self, data, client, cmd=None):
+        """\
+        <player> remove player from the list of players who can use the reserved slots
+        """
+        # this will split the player name and the message
+        input = self._adminPlugin.parseUserCmd(data)
+        if input:
+            sclient = self._adminPlugin.findClientPrompt(input[0], client)
+            if not sclient:
+                # a player matchin the name was not found, a list of closest matches will be displayed
+                # we can exit here and the user will retry with a more specific player
+                return False
+            else:
+                try:
+                    self.console.write(('reservedSlots.load',))
+                    self.console.write(('reservedSlots.removePlayer', sclient.cid))
+                    self.console.write(('reservedSlots.save',))
+                    client.message('%s removed from reserved slots list' % sclient.cid)
+                    sclient.message('You don\'t have access to reserved slots anymore')
+                except FrostbiteCommandFailedError, err:
+                    if err.message == ['PlayerNotInList']:
+                        client.message('%s has no access to reserved slots' % sclient.cid)
+                    else:
+                        client.message('Error: %s' % err.message)
+
+    def cmd_runnextround(self, data, client, cmd=None):
+        """\
+        Switch to next round, without ending current
+        """
+        self.console.say('forcing next round')
+        time.sleep(1)
+        try:
+            self.console.write(('admin.runNextRound',))
+        except FrostbiteCommandFailedError, err:
+            client.message('Error: %s' % err.message)
         
     def cmd_pakill(self, data, client, cmd=None):
         """\
@@ -767,13 +830,9 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             self.error('invalid game mode %s' % mode)
         else:
             try:
-                self.console.getServerInfo()
-                if self.console.game.gameType == mode:
-                    client.message('Server is already using the %s playlist' % mode)
-                else:
-                    self.console.write(('admin.setPlaylist', mode))
-                    client.message('Server playlist changed to %s' % mode)
-                    self.console.write(('admin.endRound', 1))
+                self.console.write(('admin.setPlaylist', mode))
+                client.message('Server playlist changed to %s' % mode)
+                client.message('Use the !map command to switch to the new game mode')
             except FrostbiteCommandFailedError, err:
                 client.message('Failed to change game mode. Server replied with: %s' % err)
             
