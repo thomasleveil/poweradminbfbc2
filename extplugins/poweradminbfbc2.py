@@ -79,8 +79,10 @@
 # 24/05/2011 - 0.7.1  - Courgette
 # * changing game mode will end the current round so that the new mode is loaded right away
 # * changing game mode to the currently running mode will be cancelled
+# 24/05/2011 - 0.7.2 - Courgette
+# * new attempt at fixing commands that change game mode
 #
-__version__ = '0.7.1'
+__version__ = '0.7.2'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re, random
@@ -771,7 +773,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
                 else:
                     self.console.write(('admin.setPlaylist', mode))
                     client.message('Server playlist changed to %s' % mode)
-                    self.console.write(('admin.endRound', 0))
+                    self.console.write(('admin.endRound', 1))
             except FrostbiteCommandFailedError, err:
                 client.message('Failed to change game mode. Server replied with: %s' % err)
             
