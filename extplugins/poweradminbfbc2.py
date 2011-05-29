@@ -84,8 +84,10 @@
 # 24/05/2011 - 0.10.0 - Courgette
 # * revert commands that change game mode (a fix is now in the BFBC2 parser)
 # * add commands !runnextround, !reserveslot and !unreserveslot 
+# 29/05/2011 - 0.11.0 - Courgette
+# * command !teams also works when teambalancer is disabled
 #
-__version__ = '0.10.0'
+__version__ = '0.11.0'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re, random
@@ -313,7 +315,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             self.debug("scrambling strategy '%s' set" % strategy)
         except:
             self._scrambler.setStrategy('random')
-            self.debug('Using default value (%s) for scrambling strategy', self._enableTeamBalancer)
+            self.debug('Using default value (%s) for scrambling strategy : random')
 
         try:
             mode = self.config.get('scrambler', 'mode')
@@ -1031,40 +1033,39 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
         self.teambalance()
                 
     def teambalance(self):
-        if self._enableTeamBalancer:
-            # get teams
-            team1players, team2players = self.getTeams()
+        # get teams
+        team1players, team2players = self.getTeams()
+        
+        # if teams are uneven by one or even, then stop here
+        gap = abs(len(team1players) - len(team2players))
+        if gap <= self._teamdiff:
+            self.verbose('Teambalancer: Teams are balanced, T1: %s, T2: %s (diff: %s, tolerance: %s)' %(len(team1players), len(team2players), gap, self._teamdiff))
+            return
+        
+        howManyMustSwitch = int(gap / 2)
+        bigTeam = 1
+        smallTeam = 2
+        if len(team2players) > len(team1players):
+            bigTeam = 2
+            smallTeam = 1
             
-            # if teams are uneven by one or even, then stop here
-            gap = abs(len(team1players) - len(team2players))
-            if gap <= self._teamdiff:
-                self.verbose('Teambalancer: Teams are balanced, T1: %s, T2: %s (diff: %s, tolerance: %s)' %(len(team1players), len(team2players), gap, self._teamdiff))
-                return
-            
-            howManyMustSwitch = int(gap / 2)
-            bigTeam = 1
-            smallTeam = 2
-            if len(team2players) > len(team1players):
-                bigTeam = 2
-                smallTeam = 1
-                
-            self.verbose('Teambalance: Teams are NOT balanced, T1: %s, T2: %s (diff: %s)' %(len(team1players), len(team2players), gap))
-            self.console.saybig('Autobalancing Teams!')
+        self.verbose('Teambalance: Teams are NOT balanced, T1: %s, T2: %s (diff: %s)' %(len(team1players), len(team2players), gap))
+        self.console.saybig('Autobalancing Teams!')
 
-            ## we need to change team for howManyMustSwitch players from bigteam
-            playerTeamTimes = {}
-            clients = self.console.clients.getList()
-            for c in clients:
-                if c.teamId == bigTeam:
-                    playerTeamTimes[c] = c.var(self, 'teamtime', self.console.time()).value
-            #self.debug('playerTeamTimes: %s' % playerTeamTimes)
-            sortedPlayersTeamTimes = sorted(playerTeamTimes.iteritems(), key=lambda (k,v):(v,k))
-            #self.debug('sortedPlayersTeamTimes: %s' % sortedPlayersTeamTimes)
+        ## we need to change team for howManyMustSwitch players from bigteam
+        playerTeamTimes = {}
+        clients = self.console.clients.getList()
+        for c in clients:
+            if c.teamId == bigTeam:
+                playerTeamTimes[c] = c.var(self, 'teamtime', self.console.time()).value
+        #self.debug('playerTeamTimes: %s' % playerTeamTimes)
+        sortedPlayersTeamTimes = sorted(playerTeamTimes.iteritems(), key=lambda (k,v):(v,k))
+        #self.debug('sortedPlayersTeamTimes: %s' % sortedPlayersTeamTimes)
 
-            playersToMove = [c for (c,teamtime) in sortedPlayersTeamTimes if c.maxLevel<self._tmaxlevel][:howManyMustSwitch]
-            self.console.say('forcing %s to the other team' % (', '.join([c.name for c in playersToMove])))
-            for c in playersToMove:
-                self._movePlayer(c, smallTeam)
+        playersToMove = [c for (c,teamtime) in sortedPlayersTeamTimes if c.maxLevel<self._tmaxlevel][:howManyMustSwitch]
+        self.console.say('forcing %s to the other team' % (', '.join([c.name for c in playersToMove])))
+        for c in playersToMove:
+            self._movePlayer(c, smallTeam)
                 
     def _movePlayer(self, client, newTeamId):
         try:
