@@ -86,8 +86,10 @@
 # * add commands !runnextround, !reserveslot and !unreserveslot 
 # 29/05/2011 - 0.11.0 - Courgette
 # * command !teams also works when teambalancer is disabled
+# 01/06/2011 - 0.11.1 - Courgette
+# * fix !setnextmap
 #
-__version__ = '0.11.0'
+__version__ = '0.11.1'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re, random
@@ -628,7 +630,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
                 except ValueError:
                     # the wanted map is not in the current cycle
                     # insert the map in the cycle
-                    mapindex = self.console.write(('mapList.nextLevelIndex',))
+                    mapindex = self.console.write(('mapList.nextLevelIndex',))[0]
                     self.console.write(('mapList.insert', mapindex, levelname))
                 if client:
                     cmd.sayLoudOrPM(client, 'nextmap set to %s' % self.console.getEasyName(levelname))
