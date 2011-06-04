@@ -88,8 +88,10 @@
 # * command !teams also works when teambalancer is disabled
 # 01/06/2011 - 0.11.1 - Courgette
 # * fix !setnextmap
+# 04/06/2011 - 0.12.0 - Courgette
+# * got teambalancer working and tested
 #
-__version__ = '0.11.1'
+__version__ = '0.12.0'
 __author__  = 'Courgette, SpacepiG, Bakes'
 
 import b3, time, re, random
@@ -989,13 +991,20 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
         client.setvar(self, 'teamtime', self.console.time())
         
     def onTeamChange(self, data, client):
-        #store the time of teamjoin for autobalancing purposes 
-        client.setvar(self, 'teamtime', self.console.time())
-        self.verbose('Client variable teamtime set to: %s' % client.var(self, 'teamtime').value)
+        # was this team change make by the player or forced by the bot ?
+        wasForcedByBot = client.var(self, 'movedByBot', False).value
+        if wasForcedByBot is True:
+            self.debug('client was moved over by the bot, don\'t reduce teamtime and don\'t check')
+            client.delvar(self, 'movedByBot')
+            return
+        else:
+            #store the time of teamjoin for autobalancing purposes 
+            client.setvar(self, 'teamtime', self.console.time())
+            self.verbose('Client variable teamtime set to: %s' % client.var(self, 'teamtime').value)
         
         if self._enableTeamBalancer:
-            
             if self.console.time() < self._ignoreBalancingTill:
+                self.debug('ignoring team balancing right now')
                 return
             
             if client.team in (b3.TEAM_SPEC, b3.TEAM_UNKNOWN):
@@ -1014,17 +1023,17 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             
             # has the current player gone contributed to making teams uneven ?
             if client.cid in biggestteam:
-                self.debug('%s has contributed to unbalance the teams')
+                self.debug('%s has contributed to unbalance the teams', client)
                 client.message('do not make teams unbalanced')
                 if client.teamId == 1:
                     newteam = '2'
                 else:
                     newteam = '1' 
-                try:
-                    self.console.write(('admin.movePlayer', client.cid, newteam, 0, 'true'))
-                except FrostbiteCommandFailedError, err:
-                    self.warning('Error, server replied %s' % err)
-                
+                self._movePlayer(client, newteam)
+                # do not autobalance right after that
+                self._ignoreBalancingTill = self.console.time() + 10
+
+
     def autobalance(self):
         ## called from cron
         if self._enableTeamBalancer is False:
@@ -1061,13 +1070,18 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             if c.teamId == bigTeam:
                 playerTeamTimes[c] = c.var(self, 'teamtime', self.console.time()).value
         #self.debug('playerTeamTimes: %s' % playerTeamTimes)
-        sortedPlayersTeamTimes = sorted(playerTeamTimes.iteritems(), key=lambda (k,v):(v,k))
-        #self.debug('sortedPlayersTeamTimes: %s' % sortedPlayersTeamTimes)
+        sortedPlayersTeamTimes = sorted(playerTeamTimes.iteritems(), key=lambda (k,v):(v,k), reverse=True)
+        #self.debug('sortedPlayersTeamTimes: %s' % ["%s(%s)"%(c.name,teamtime) for c, teamtime in sortedPlayersTeamTimes])
 
         playersToMove = [c for (c,teamtime) in sortedPlayersTeamTimes if c.maxLevel<self._tmaxlevel][:howManyMustSwitch]
-        self.console.say('forcing %s to the other team' % (', '.join([c.name for c in playersToMove])))
-        for c in playersToMove:
-            self._movePlayer(c, smallTeam)
+        if len(playersToMove)==0:
+            self.info("teambalancer could not find any candidate from [%s] to \
+move to the other team because of teambalancer/maxlevel settings : \
+%s", ', '.join(["%s(%s)"%(c.name, c.maxLevel) for (c,teamtime) in sortedPlayersTeamTimes]), self._tmaxlevel)
+        else:
+            self.console.say('forcing %s to the other team' % (', '.join(c.name for c in playersToMove)))
+            for c in playersToMove:
+                self._movePlayer(c, smallTeam)
                 
     def _movePlayer(self, client, newTeamId):
         try:
@@ -1084,7 +1098,7 @@ class Poweradminbfbc2Plugin(b3.plugin.Plugin):
             if str(clientdata['teamId']) == '1':
                 team1players.append(name)
             elif str(clientdata['teamId']) == '2':
-                team1players.append(name)
+                team2players.append(name)
         return team1players, team2players
        
 ################################################################################## 
@@ -1217,7 +1231,7 @@ if __name__ == '__main__':
     fakeConsole.Events.createEvent('EVT_GAME_ROUND_PLAYER_SCORES', 'round player scores')
     fakeConsole.Events.createEvent('EVT_GAME_ROUND_TEAM_SCORES', 'round team scores')
     
-    from b3.fake import joe, simon, moderator, superadmin
+    from b3.fake import joe, simon, moderator, superadmin, FakeClient
             
     from b3.config import XmlConfigParser
     conf = XmlConfigParser()
@@ -1308,7 +1322,7 @@ if __name__ == '__main__':
                 'name' : c.name,
                 'teamId': c.teamId
                 }
-        print "getPlayerList : %s" % repr(players)
+        #print "getPlayerList : %s" % repr(players)
         return players
     FakeConsole.getPlayerList = getPlayerList
     
@@ -1324,10 +1338,61 @@ if __name__ == '__main__':
         return fakeConsole.clients.getByCID(cid)
     FakeConsole.getClient = getClient
     
-    def movePlayer(client, newTeamId):
+    def getTeam(team):
+        """convert BFBC2 team numbers to B3 team numbers"""
+        team = int(team)
+        if team == 1:
+            return b3.TEAM_RED
+        elif team == 2:
+            return b3.TEAM_BLUE
+        elif team == 3:
+            return b3.TEAM_SPEC
+        else:
+            return b3.TEAM_UNKNOWN
+    
+    def joinsTeam(self, teamId):
+        print "\n%s goes to team %s" % (self.name, teamId)
+        self.teamId = teamId
+        self.team = getTeam(teamId) # .team setter will send team change event
+        self.console.queueEvent(self.console.getEvent("EVT_CLIENT_TEAM_CHANGE", teamId, self))
+    FakeClient.joinsTeam = joinsTeam
+    
+    def movePlayer(self, client, newTeamId):
+        client.setvar(self, 'movedByBot', True)
         client.teamId = newTeamId
         print " %s -----> team %s" % (client.cid, newTeamId)
-    p._movePlayer = movePlayer
+        self.console.queueEvent(self.console.getEvent("EVT_CLIENT_TEAM_CHANGE", newTeamId, client))
+    Poweradminbfbc2Plugin._movePlayer = movePlayer
+    
+    def printTeams():
+        team1players = []
+        team2players = []
+        for client in fakeConsole.clients.getList():
+            if str(client.teamId) == '1':
+                team1players.append(client)
+            elif str(client.teamId) == '2':
+                team2players.append(client)
+        print("+" + ("-"*32) + "+" + ("-"*32) + "+") 
+        while len(team1players) + len(team2players) > 0:
+            try:
+                p1 = team1players.pop()
+                p1name = p1.name
+                c = p1.var(p, 'teamtime', fakeConsole.time())
+                p1teamtime = "(%s)" % c.value
+            except IndexError:
+                p1name = ''
+                p1teamtime = ''
+            try:
+                p2 = team2players.pop()
+                p2name = p2.name
+                c = p2.var(p, 'teamtime', fakeConsole.time())
+                p2teamtime = "(%s)" % c.value
+            except IndexError:
+                p2name = ''
+                p2teamtime = ''
+            print("| {:>18}{:12} | {:>18}{:12} |".format(p1name, p1teamtime, p2name, p2teamtime))
+        print("+" + ("-"*32) + "+" + ("-"*32) + "+") 
+
     
     def testMatch1():
         print """-----------------------
@@ -1617,42 +1682,89 @@ if __name__ == '__main__':
         if p._tcronTab:
             p.console.cron - p._tcronTab
         
-        from b3.fake import simon, moderator, FakeClient
-        
         time.sleep(1)
+        print("="*60)
+        printTeams()
         p.teambalance()
+        printTeams()
         time.sleep(2)
         p.teambalance()
-        time.sleep(2)
-        print "- - - - - - - - - - - "
-        superadmin.teamId = 1
-        joe.teamId = 1
-        joe.groupBits = 16
-        simon.connects('simon')
-        simon.teamId = 1
-        simon.groupBits = 16
-        moderator.connects('moderator')
-        moderator.teamId = 1
-        moderator.groupBits = 16
+        printTeams()
+        
+    def test_teambalancer_maxlevel():
+        p._ignoreBalancingTill = time.time() - 1
+        p._enableTeamBalancer = True
+        # remove crontab s
+        if p._tcronTab:
+            p.console.cron - p._tcronTab
+        p._tmaxlevel = 20
+        
         p1 = FakeClient(fakeConsole, name="p1", exactName="P1", guid="p1", groupBits=16, teamId=1)
         p1.connects('p1')
-        p2 = FakeClient(fakeConsole, name="p2", exactName="P2", guid="p2", groupBits=1, teamId=1)
+        p2 = FakeClient(fakeConsole, name="p2", exactName="P2", guid="p2", groupBits=16, teamId=1)
         p2.connects('p2')
         p3 = FakeClient(fakeConsole, name="p3", exactName="P3", guid="p3", groupBits=16, teamId=1)
         p3.connects('p3')
-        p4 = FakeClient(fakeConsole, name="p4", exactName="P4", guid="p4", groupBits=1, teamId=1)
+        p4 = FakeClient(fakeConsole, name="p4", exactName="P4", guid="p4", groupBits=16, teamId=1)
         p4.connects('p4')
-        p5 = FakeClient(fakeConsole, name="p5", exactName="P5", guid="p5", groupBits=16, teamId=1)
+        p5 = FakeClient(fakeConsole, name="p5", exactName="P5", guid="p5", groupBits=1, teamId=1)
         p5.connects('p5')
-        p6 = FakeClient(fakeConsole, name="p6", exactName="P6", guid="p6", groupBits=16, teamId=1)
+        p6 = FakeClient(fakeConsole, name="p6", exactName="P6", guid="p6", groupBits=1, teamId=1)
         p6.connects('p6')
-        time.sleep(2)
+        
+        print("\n\n")
+        printTeams()
         p.teambalance()
+        printTeams()
+        p.teambalance()
+        printTeams()
+
+
+    def test_teambalancer_recidivist():
+        p._ignoreBalancingTill = time.time() - 1
+        p._enableTeamBalancer = True
+        # remove crontab s
+        if p._tcronTab:
+            p.console.cron - p._tcronTab
+        p._tmaxlevel = 100
+        
+        time.sleep(1)
+        p1 = FakeClient(fakeConsole, name="p1", exactName="P1", guid="guid_p1", groupBits=1, teamId=2)
+        p1.connects('p1')
+        time.sleep(1)
+        p2 = FakeClient(fakeConsole, name="p2", exactName="P2", guid="guid_p2", groupBits=1, teamId=2)
+        p2.connects('p2')
+        time.sleep(1)
+        p3 = FakeClient(fakeConsole, name="p3", exactName="P3", guid="guid_p3", groupBits=1, teamId=1)
+        p3.connects('p3')
+        time.sleep(1)
+        p4 = FakeClient(fakeConsole, name="p4", exactName="P4", guid="guid_p4", groupBits=1, teamId=2)
+        p4.connects('p4')
+        
+        print("\n\n")
+        printTeams()
+        p.teambalance()
+        
+        time.sleep(1)
+        p._ignoreBalancingTill = time.time() + 2
+        p1.joinsTeam(1)
+        
+        printTeams()
+        p.teambalance()
+        printTeams()
+        
+        p._ignoreBalancingTill = fakeConsole.time() - 1
+        time.sleep(2)
+        p1.joinsTeam(1)
+        printTeams()
+        
         
 
     #test_swap()
     #test_scramble()
     #test_autoscramble_round()
     #test_autoscramble_map()
-    test_teambalancer()
+    #test_teambalancer()
+    #test_teambalancer_maxlevel()
+    test_teambalancer_recidivist()
     
